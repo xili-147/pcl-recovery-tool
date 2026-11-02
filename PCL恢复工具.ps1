@@ -32,7 +32,7 @@ Add-Type -AssemblyName System.Drawing
 # ============================================================================
 #  配置
 # ============================================================================
-$script:AppVersion    = "1.1.0"
+$script:AppVersion    = "1.1.1"
 $script:OldPCLVersion = "2.14.0.0"
 $script:ExeName       = "Plain Craft Launcher 2.exe"
 
@@ -255,7 +255,7 @@ if ($Guard) {
     $cfg = Get-ToolConfig
     $pclDir = $cfg.PclDir
     if (-not $pclDir -or -not (Test-Path (Join-Path $pclDir $script:ExeName))) {
-        $found = Find-PCLInstallations
+        $found = @(Find-PCLInstallations)
         if ($found.Count -gt 0) { $pclDir = $found[0] }
     }
     if (-not $pclDir) { exit 0 }
@@ -589,10 +589,13 @@ $form.Controls.Add($tipLabel)
 #  事件处理
 # ============================================================================
 
+# 初始化期间给复选框赋初值会触发 CheckedChanged，要拦住，避免把空路径写进配置
+$script:UiReady = $false
+
 # --- 检测按钮 ---
 $detectBtn.Add_Click({
     Write-Log "正在检测 PCL 安装位置..." "Yellow"
-    $found = Find-PCLInstallations
+    $found = @(Find-PCLInstallations)
     if ($found.Count -gt 0) {
         $pathBox.Text = $found[0]
         Write-Log "找到 $($found.Count) 个 PCL 安装：" "Yellow"
@@ -649,12 +652,14 @@ $guardBtn.Add_Click({
 
 # --- 开机自动守卫 ---
 $chkAutoGuard.Add_CheckedChanged({
+    if (-not $script:UiReady) { return }
     $ok = Set-AutoGuard -Enable $chkAutoGuard.Checked
     Save-ToolConfig -PclDir $pathBox.Text -AutoGuard $chkAutoGuard.Checked -LockAll $chkLockAll.Checked
 })
 
 # --- 完全锁定更新 ---
 $chkLockAll.Add_CheckedChanged({
+    if (-not $script:UiReady) { return }
     $pclDir = $pathBox.Text.Trim()
     if ($pclDir -and (Test-Path (Join-Path $pclDir $script:ExeName))) {
         Set-FullLock -Lock $chkLockAll.Checked -PclDir $pclDir
@@ -742,7 +747,7 @@ $cfg = Get-ToolConfig
 $chkAutoGuard.Checked = [bool]$cfg.AutoGuard
 $chkLockAll.Checked = [bool]$cfg.LockAll
 
-$found = Find-PCLInstallations
+$found = @(Find-PCLInstallations)
 if ($found.Count -gt 0) {
     $pathBox.Text = $found[0]
     Write-Log "检测到 PCL: $($found[0])" "LightGreen"
@@ -756,6 +761,12 @@ if ($found.Count -gt 0) {
 } else {
     Write-Log "未自动检测到 PCL，请点击浏览手动选择" "Orange"
 }
+
+# 配置自愈：检测到的路径与配置不一致时，顺手写回配置（修复旧版空路径问题）
+if ($pathBox.Text -and $pathBox.Text -ne $cfg.PclDir) {
+    Save-ToolConfig -PclDir $pathBox.Text -AutoGuard $chkAutoGuard.Checked -LockAll $chkLockAll.Checked
+}
+$script:UiReady = $true
 
 Write-Log "更新策略：正常更新放行，坏更新（≥$($script:BadVersionMin)）自动撤回" "LightGreen"
 if (Test-Path $script:StartupLnk) {
